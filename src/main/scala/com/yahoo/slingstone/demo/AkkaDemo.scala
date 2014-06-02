@@ -1,42 +1,31 @@
 package com.yahoo.slingstone.demo
 
 import akka.actor._
+import akka.routing.{Broadcast, RoundRobinRouter}
+import scala.io.Source
+import akka.pattern.gracefulStop
 import scala.concurrent.duration._
+import scala.concurrent.ExecutionContext
+import ExecutionContext.Implicits.global
 
-case object Greet
-case class WhoToGreet(who: String)
-case class Greeting(message: String)
+case class Line(line: String)
 
-class Greeter extends Actor {
-  var greeting = ""
-
+class LinePrinter extends Actor {
   def receive = {
-    case WhoToGreet(who) => greeting = s"Hello, $who"
-    case Greet => sender ! Greeting(greeting)
-  }
-}
-
-class GreetPrinter extends Actor {
-  def receive = {
-    case Greeting(message) => println(message)
+    case Line(line) => println(line)
   }
 }
 
 object AkkaDemo extends App {
   val system = ActorSystem("akkademo")
-  val greeter = system.actorOf(Props[Greeter], "greeter")
-  val inbox = Inbox.create(system)
+  val router = system.actorOf(Props[LinePrinter].withRouter(RoundRobinRouter(3)), "router")
 
-  greeter.tell(WhoToGreet("akka"), ActorRef.noSender)
-  inbox.send(greeter, Greet)
-  val Greeting(message1) = inbox.receive(5.seconds)
-  println(s"Greeting: $message1")
-
-  greeter.tell(WhoToGreet("typesafe"), ActorRef.noSender)
-  inbox.send(greeter, Greet)
-  val Greeting(message2) = inbox.receive(5.seconds)
-  println(s"Greeting: $message2")
-
-  val greetPrinter = system.actorOf(Props[GreetPrinter])
-  system.scheduler.schedule(0.second, 1.second, greeter, Greet)(system.dispatcher, greetPrinter)
+  // read file line by line
+  for (line <- Source.fromFile(args(0)).getLines()) {
+    router ! Line(line)
+  }
+  val terminate = gracefulStop(router, 2.seconds, Broadcast(PoisonPill))
+  terminate onComplete { _ =>
+    system.shutdown()
+  }
 }
